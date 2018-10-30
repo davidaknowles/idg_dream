@@ -1,0 +1,97 @@
+---
+title: "IDG_DREAM"
+output: html_document
+---
+
+```{r}
+require(tidyverse)
+theme_set(theme_bw(base_size = 15))
+require(doMC)
+require(magrittr)
+```
+
+## Load data
+
+```{r}
+dat=read_csv("DTC_data.csv.gz")
+mean(is.na(dat$standard_inchi_key)) # 1.5%
+mean(is.na(dat$compound_id)) # 0.6%
+mean(is.na(dat$wildtype_or_mutant)) # 97%
+```
+
+## Exploratory analysis
+
+### standard_relation
+
+```{r}
+table(dat$standard_relation) %>% sort(decreasing = T)
+```
+
+### standard_type
+
+```{r}
+ta=table(dat$standard_type) %>% sort(decreasing = T)
+data_frame(standard_type=names(ta), count=ta)
+```
+
+This suggests NM is always used. 
+
+```{r}
+dat %>% filter(standard_type=="KD") %$% standard_units %>% table() %>% sort(decreasing = T)
+```
+
+### assay_format
+
+Other assay_* columns look less useful. 
+
+```{r}
+table(dat$assay_format) 
+```
+
+```{r}
+table(dat$assay_subtype) %>% sort(decreasing = T)
+```
+
+## Save filtered version
+
+```{r}
+dat %<>% filter(standard_units == "NM" ,
+               !is.na(target_id)) %>% 
+  select(compound_id, 
+         standard_inchi_key, 
+         standard_type, 
+         standard_relation, 
+         standard_value, 
+         assay_format, 
+         assay_subtype, 
+         target_id) 
+dat %>%  write_tsv("dtc_filtered.tsv.gz")
+```
+
+## Convert to matrix
+
+```{r}
+common_types = table(dat$standard_type) %>% sort(decreasing = T) %>% head(5) %>% names()
+mat = dat %>% filter(standard_type %in% common_types, 
+                     standard_relation=="=" | is.na(standard_relation), 
+                     ) %>%
+  select(compound_id, target_id, standard_type, standard_value) %>% 
+  group_by(compound_id, target_id, standard_type) %>%
+  summarize(standard_value=mean(standard_value)) %>%
+  ungroup() %>%
+  spread(standard_type, standard_value)
+```
+
+## Compare activity measures
+
+```{r}
+co=cor(asinh(mat[,3:7]), use = "pairwise")
+co
+```
+
+```{r}
+foreach(other_y = setdiff( common_types, "KD" )) %do% { 
+  mat %>% filter(!is.na(KD), !is.na(!!sym(other_y))) %>% 
+    ggplot(aes(asinh(!!sym(other_y)), asinh(KD))) + geom_point(alpha=0.3) + stat_smooth(method="lm")
+}
+```
